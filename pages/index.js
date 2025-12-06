@@ -88,9 +88,13 @@ export default function YouTubeDownloaderApp() {
   const [error, setError] = useState("");
   const [selectedQuality, setSelectedQuality] = useState("");
 
-  const { history, addToHistory, clearHistory, removeItem } = useDownloadHistory();
+  const { history, addToHistory, clearHistory, removeItem } =
+    useDownloadHistory();
   const { settings, updateSettings } = useSettings();
 
+  /* -------------------------------------------------------
+      FETCH VIDEO DETAILS
+  ------------------------------------------------------- */
   const fetchVideoInfo = async () => {
     setError("");
     setResult(null);
@@ -117,12 +121,11 @@ export default function YouTubeDownloaderApp() {
       if (!response.ok) throw new Error(data.error || "Failed to fetch video");
 
       setResult(data.data);
-      
-      // Auto-select first quality option
-      if (data.data.qualities && data.data.qualities.length > 0) {
+
+      if (data.data.qualities?.length > 0) {
         setSelectedQuality(data.data.qualities[0].quality);
       }
-      
+
       setCurrentPage("download");
     } catch (err) {
       setError(err.message || "Failed to fetch video info");
@@ -131,47 +134,90 @@ export default function YouTubeDownloaderApp() {
     }
   };
 
-  const handleDownload = () => {
+  /* -------------------------------------------------------
+      DOWNLOAD HANDLER
+  ------------------------------------------------------- */
+  const handleDownload = async () => {
     if (!result) return;
 
-    // Find the selected quality's download URL
-    const selectedVideo = result.qualities?.find(q => 
-      q.quality === selectedQuality
+    const selected = result.qualities?.find(
+      (q) => q.quality === selectedQuality
     );
 
-    const videoUrl = selectedVideo?.url || result.qualities?.[0]?.url;
+    const downloadUrl = selected?.url;
 
-    if (!videoUrl) {
-      setError("Download URL not available for selected quality");
+    if (!downloadUrl) {
+      setError("Download URL not available for this quality.");
       return;
     }
 
-    // Add to history
+    // Save history
     addToHistory({
       title: result.title,
       author: result.author,
       thumbnail: result.thumbnail,
-      url: result.videoUrl,
       quality: selectedQuality,
+      url: result.videoUrl,
     });
 
-    // Clean title for filename
+    // Clean filename
     const cleanTitle = result.title
-      .replace(/[^\w\s-]/gi, '')
-      .replace(/\s+/g, '_')
-      .substring(0, 50);
+      .replace(/[^\w\s-]/g, "")
+      .replace(/\s+/g, "_")
+      .substring(0, 40);
 
-    // Determine file extension based on quality type
-    const isAudio = selectedQuality.toLowerCase().includes('audio');
-    const extension = isAudio ? 'mp3' : 'mp4';
+    const ext = selectedQuality.toLowerCase().includes("audio")
+      ? "mp3"
+      : "mp4";
 
-    const downloadUrl = `/api/download?url=${encodeURIComponent(
-      videoUrl
-    )}&filename=${encodeURIComponent(`${cleanTitle}.${extension}`)}`;
+    const fileName = `${cleanTitle}.${ext}`;
 
-    window.location.href = downloadUrl;
+    try {
+      setError("");
+      setLoading(true);
+
+      // Use backend proxy to download
+      const response = await fetch('/api/download', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: downloadUrl,
+          filename: fileName,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Download failed');
+      }
+
+      // Get the blob from response
+      const blob = await response.blob();
+
+      // Create download link
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up blob URL
+      window.URL.revokeObjectURL(blobUrl);
+
+    } catch (err) {
+      setError("Download failed. Please try again.");
+      console.error("Download error:", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
+  /* -------------------------------------------------------
+      PAGE RENDERING
+  ------------------------------------------------------- */
   const renderPage = () => {
     switch (currentPage) {
       case "home":
@@ -201,12 +247,17 @@ export default function YouTubeDownloaderApp() {
           />
         );
       case "settings":
-        return <SettingsPage settings={settings} onUpdate={updateSettings} />;
+        return (
+          <SettingsPage settings={settings} onUpdate={updateSettings} />
+        );
       default:
         return <HomePage onNavigate={setCurrentPage} settings={settings} />;
     }
   };
 
+  /* -------------------------------------------------------
+      MAIN UI WRAPPER
+  ------------------------------------------------------- */
   return (
     <div
       className={`min-h-screen transition-colors duration-300 ${
@@ -215,6 +266,7 @@ export default function YouTubeDownloaderApp() {
           : "bg-gradient-to-br from-red-50 via-orange-50 to-yellow-50"
       }`}
     >
+      {/* HEADER */}
       <header
         className={`sticky top-0 z-50 backdrop-blur-lg border-b ${
           settings.theme === "dark"
@@ -236,8 +288,12 @@ export default function YouTubeDownloaderApp() {
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-6">{renderPage()}</main>
+      {/* MAIN SECTION */}
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        {renderPage()}
+      </main>
 
+      {/* BOTTOM NAV */}
       <nav
         className={`fixed bottom-0 left-0 right-0 backdrop-blur-lg border-t px-4 py-3 ${
           settings.theme === "dark"
@@ -280,6 +336,9 @@ export default function YouTubeDownloaderApp() {
   );
 }
 
+/* -------------------------------------------------------
+    NAV BUTTON
+------------------------------------------------------- */
 function NavButton({ icon: Icon, label, active, onClick, theme }) {
   return (
     <button
@@ -320,68 +379,73 @@ function HomePage({ onNavigate, settings }) {
     {
       icon: Download,
       title: "Multiple Formats",
-      desc: "720p, 1080p, 4K available",
+      desc: "720p, 1080p, MP3",
       action: "download",
     },
   ];
 
   return (
     <div className="space-y-8 pb-24">
+      {/* HERO */}
       <div
-        className={`rounded-3xl p-8 border text-center ${
+        className={`rounded-3xl p-8 text-center border ${
           settings.theme === "dark"
-            ? "bg-gradient-to-br from-red-900/50 to-orange-900/50 border-red-700"
+            ? "bg-gradient-to-br from-red-900/40 to-orange-900/40 border-red-700"
             : "bg-gradient-to-br from-red-100 to-orange-100 border-red-200"
         }`}
       >
         <div className="inline-block bg-gradient-to-br from-red-600 to-red-500 p-4 rounded-2xl mb-4">
           <Youtube className="w-12 h-12 text-white" />
         </div>
+
         <h2
-          className={`text-3xl font-bold mb-2 ${
+          className={`text-3xl font-bold ${
             settings.theme === "dark" ? "text-white" : "text-gray-900"
           }`}
         >
           Download YouTube Videos
         </h2>
+
         <p
-          className={`mb-6 ${
+          className={`mt-2 ${
             settings.theme === "dark" ? "text-gray-300" : "text-gray-600"
           }`}
         >
-          Fast, free & HD quality downloads
+          Fast, free & HD downloads — No proxy required.
         </p>
+
         <button
           onClick={() => onNavigate("download")}
-          className="bg-gradient-to-r from-red-600 to-red-500 text-white px-8 py-3 rounded-xl font-semibold hover:opacity-90 transition shadow-lg"
+          className="mt-6 bg-gradient-to-r from-red-600 to-red-500 text-white px-10 py-3 rounded-xl font-semibold hover:opacity-90 transition shadow-lg"
         >
           Start Downloading
         </button>
       </div>
 
+      {/* FEATURES */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {features.map((f, i) => (
           <button
             key={i}
             onClick={() => onNavigate(f.action)}
-            className={`backdrop-blur-lg p-6 rounded-2xl border hover:shadow-xl transition text-left w-full hover:scale-105 ${
+            className={`p-6 rounded-2xl border backdrop-blur-lg hover:shadow-xl transition hover:scale-105 ${
               settings.theme === "dark"
-                ? "bg-gray-800/50 border-gray-700"
-                : "bg-white/70 border-gray-200"
+                ? "bg-gray-800/40 border-gray-700"
+                : "bg-white/80 border-gray-200"
             }`}
           >
-            <div className="bg-gradient-to-br from-red-600 to-red-500 w-12 h-12 rounded-xl flex items-center justify-center mb-4">
+            <div className="w-12 h-12 bg-gradient-to-br from-red-600 to-red-500 rounded-xl flex items-center justify-center mb-4">
               <f.icon className="w-6 h-6 text-white" />
             </div>
             <h3
-              className={`font-bold text-lg mb-2 ${
+              className={`font-bold text-lg ${
                 settings.theme === "dark" ? "text-white" : "text-gray-900"
               }`}
             >
               {f.title}
             </h3>
             <p
-              className={`text-sm ${
+              className={`text-sm mt-1 ${
                 settings.theme === "dark" ? "text-gray-400" : "text-gray-600"
               }`}
             >
@@ -391,24 +455,26 @@ function HomePage({ onNavigate, settings }) {
         ))}
       </div>
 
+      {/* HOW IT WORKS */}
       <div
-        className={`backdrop-blur-lg rounded-2xl p-6 border ${
+        className={`p-6 rounded-2xl border backdrop-blur-lg ${
           settings.theme === "dark"
-            ? "bg-gray-800/50 border-gray-700"
-            : "bg-white/70 border-gray-200"
+            ? "bg-gray-800/40 border-gray-700"
+            : "bg-white/80 border-gray-200"
         }`}
       >
         <h3
-          className={`font-bold text-xl mb-4 ${
+          className={`text-xl font-bold mb-4 ${
             settings.theme === "dark" ? "text-white" : "text-gray-900"
           }`}
         >
           How It Works
         </h3>
+
         <div className="space-y-3">
           <Step number="1" text="Copy YouTube video URL" theme={settings.theme} />
-          <Step number="2" text="Paste URL and select quality" theme={settings.theme} />
-          <Step number="3" text="Download video instantly" theme={settings.theme} />
+          <Step number="2" text="Paste URL and fetch video info" theme={settings.theme} />
+          <Step number="3" text="Choose quality and download instantly" theme={settings.theme} />
         </div>
       </div>
     </div>
@@ -418,7 +484,7 @@ function HomePage({ onNavigate, settings }) {
 function Step({ number, text, theme }) {
   return (
     <div className="flex items-center gap-3">
-      <div className="bg-gradient-to-br from-red-600 to-red-500 w-8 h-8 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
+      <div className="w-8 h-8 bg-gradient-to-br from-red-600 to-red-500 rounded-full flex items-center justify-center text-white font-bold text-sm">
         {number}
       </div>
       <p className={`${theme === "dark" ? "text-gray-300" : "text-gray-700"}`}>
@@ -443,22 +509,25 @@ function DownloadPage({
   onDownload,
   settings,
 }) {
+  // Format Duration (MM:SS)
   const formatDuration = (seconds) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
+  // Format Views
   const formatViews = (views) => {
-    if (views >= 1000000) return `${(views / 1000000).toFixed(1)}M`;
-    if (views >= 1000) return `${(views / 1000).toFixed(1)}K`;
+    if (views >= 1_000_000) return `${(views / 1_000_000).toFixed(1)}M`;
+    if (views >= 1_000) return `${(views / 1_000).toFixed(1)}K`;
     return views;
   };
 
   return (
     <div className="space-y-6 pb-24">
+      {/* Input Card */}
       <div
-        className={`backdrop-blur-lg rounded-2xl p-6 border shadow-lg ${
+        className={`rounded-2xl p-6 border backdrop-blur-lg shadow-lg ${
           settings.theme === "dark"
             ? "bg-gray-800/50 border-gray-700"
             : "bg-white/70 border-gray-200"
@@ -469,10 +538,11 @@ function DownloadPage({
             settings.theme === "dark" ? "text-white" : "text-gray-900"
           }`}
         >
-          Download Video
+          Download YouTube Video
         </h2>
 
         <div className="space-y-4">
+          {/* URL Input */}
           <div>
             <label
               className={`block text-sm font-semibold mb-2 ${
@@ -485,18 +555,16 @@ function DownloadPage({
               type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              placeholder="https://www.youtube.com/watch?v=... or https://youtu.be/..."
-              className={`w-full px-4 py-3 rounded-xl border focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none transition ${
+              placeholder="https://www.youtube.com/watch?v=..."
+              className={`w-full px-4 py-3 rounded-xl border outline-none focus:ring-2 focus:ring-red-500 ${
                 settings.theme === "dark"
                   ? "bg-gray-700 border-gray-600 text-white"
                   : "bg-white border-gray-300 text-gray-900"
               }`}
             />
-            <p className="text-xs text-gray-500 mt-1">
-              Paste any YouTube video URL
-            </p>
           </div>
 
+          {/* FETCH BUTTON */}
           <button
             onClick={onFetch}
             disabled={loading}
@@ -505,7 +573,7 @@ function DownloadPage({
             {loading ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                Fetching Video...
+                Fetching...
               </>
             ) : (
               <>
@@ -517,9 +585,10 @@ function DownloadPage({
         </div>
       </div>
 
+      {/* ERROR BOX */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex items-start gap-3">
-          <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-4 flex gap-3">
+          <AlertCircle className="w-5 h-5 text-red-600 mt-1" />
           <div>
             <h4 className="font-semibold text-red-900">Error</h4>
             <p className="text-red-700 text-sm">{error}</p>
@@ -527,30 +596,33 @@ function DownloadPage({
         </div>
       )}
 
+      {/* LOADING SKELETON */}
       {loading && (
         <div
-          className={`backdrop-blur-lg rounded-2xl p-6 border ${
+          className={`rounded-2xl p-6 border backdrop-blur-lg ${
             settings.theme === "dark"
               ? "bg-gray-800/50 border-gray-700"
               : "bg-white/70 border-gray-200"
           }`}
         >
-          <div className="space-y-4">
-            <div className="h-48 bg-gray-200 rounded-xl animate-pulse" />
-            <div className="h-4 bg-gray-200 rounded animate-pulse w-3/4" />
-            <div className="h-4 bg-gray-200 rounded animate-pulse w-1/2" />
+          <div className="space-y-3">
+            <div className="h-48 bg-gray-200 animate-pulse rounded-xl" />
+            <div className="h-4 bg-gray-200 animate-pulse rounded w-3/4" />
+            <div className="h-4 bg-gray-200 animate-pulse rounded w-1/2" />
           </div>
         </div>
       )}
 
+      {/* RESULT PREVIEW */}
       {result && !loading && (
         <div
-          className={`backdrop-blur-lg rounded-2xl p-6 border shadow-lg space-y-4 ${
+          className={`rounded-2xl p-6 border backdrop-blur-lg shadow-lg space-y-5 ${
             settings.theme === "dark"
               ? "bg-gray-800/50 border-gray-700"
               : "bg-white/70 border-gray-200"
           }`}
         >
+          {/* Header */}
           <div className="flex items-center justify-between">
             <h3
               className={`text-xl font-bold ${
@@ -559,92 +631,92 @@ function DownloadPage({
             >
               Video Ready!
             </h3>
-            <div className="flex items-center gap-2 px-3 py-1 bg-green-100 text-green-700 rounded-full text-xs font-semibold">
+            <div className="text-xs bg-green-100 text-green-700 px-3 py-1 rounded-full flex items-center gap-1 font-semibold">
               <CheckCircle className="w-4 h-4" />
               READY
             </div>
           </div>
 
-          <div className="relative rounded-xl overflow-hidden">
+          {/* Thumbnail */}
+          <div className="relative rounded-xl overflow-hidden shadow-md">
             <img
               src={result.thumbnail}
               alt={result.title}
-              className="w-full h-auto rounded-xl"
+              className="w-full rounded-xl"
             />
             <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
               <Play className="w-16 h-16 text-white opacity-80" />
             </div>
           </div>
 
+          {/* Meta Info */}
           <div>
             <h4
-              className={`font-bold text-lg mb-2 ${
+              className={`text-lg font-bold ${
                 settings.theme === "dark" ? "text-white" : "text-gray-900"
               }`}
             >
               {result.title}
             </h4>
             <p
-              className={`text-sm mb-3 ${
+              className={`text-sm mb-2 ${
                 settings.theme === "dark" ? "text-gray-400" : "text-gray-600"
               }`}
             >
-              by {result.author}
+              {result.author}
             </p>
 
-            <div className="flex items-center gap-4 text-sm text-gray-500">
-              <div className="flex items-center gap-1">
+            <div className="flex gap-4 text-sm text-gray-500">
+              <span className="flex items-center gap-1">
                 <Eye className="w-4 h-4" />
-                <span>{formatViews(result.views)} views</span>
-              </div>
-              <div className="flex items-center gap-1">
+                {formatViews(result.views)} views
+              </span>
+              <span className="flex items-center gap-1">
                 <Clock className="w-4 h-4" />
-                <span>{formatDuration(result.duration)}</span>
-              </div>
+                {formatDuration(result.duration)}
+              </span>
             </div>
           </div>
 
-          <div>
+          {/* QUALITY SELECTOR */}
+          <div className="mt-4">
             <label
               className={`block text-sm font-semibold mb-2 ${
                 settings.theme === "dark" ? "text-gray-300" : "text-gray-700"
               }`}
             >
-              Select Quality ({result.qualities?.length || 0} options available)
+              Select Quality
             </label>
+
             <select
               value={selectedQuality}
               onChange={(e) => setSelectedQuality(e.target.value)}
               className={`w-full px-4 py-3 rounded-xl border focus:ring-2 focus:ring-red-500 outline-none ${
                 settings.theme === "dark"
-                  ? "bg-gray-700 border-gray-600 text-white"
+                  ? "bg-gray-700 text-white border-gray-600"
                   : "bg-white border-gray-300"
               }`}
             >
-              {result.qualities && result.qualities.length > 0 ? (
-                result.qualities.map((q, idx) => (
-                  <option key={idx} value={q.quality}>
-                    {q.quality} {q.filesize ? `- ${q.filesize}` : ''}
-                    {q.type === 'audio' ? ' (Audio Only)' : ''}
-                  </option>
-                ))
-              ) : (
-                <option value="">No qualities available</option>
-              )}
+              {result.qualities.map((q, i) => (
+                <option key={i} value={q.quality}>
+                  {q.quality} — {q.filesize || "size unknown"}
+                  {q.type === "audio" ? " (Audio)" : ""}
+                </option>
+              ))}
             </select>
           </div>
 
+          {/* DOWNLOAD BUTTON */}
           <button
             onClick={onDownload}
-            disabled={!result.qualities || result.qualities.length === 0}
-            className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl shadow-lg hover:opacity-90 transition disabled:opacity-50 flex items-center justify-center gap-2 text-lg"
+            className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white font-bold rounded-xl shadow-lg hover:opacity-90 transition text-lg flex items-center justify-center gap-2"
           >
             <Download className="w-6 h-6" />
             Download Now
           </button>
 
           <p className="text-xs text-center text-gray-500">
-            Free • Fast • No registration required
+            Direct download • No proxy • Fast & secure
           </p>
         </div>
       )}
@@ -660,7 +732,7 @@ function HistoryPage({ history, onClear, onRemove, settings }) {
     return (
       <div className="pb-24">
         <div
-          className={`backdrop-blur-lg rounded-2xl p-12 border text-center ${
+          className={`rounded-2xl p-12 border backdrop-blur-lg text-center ${
             settings.theme === "dark"
               ? "bg-gray-800/50 border-gray-700"
               : "bg-white/70 border-gray-200"
@@ -674,7 +746,7 @@ function HistoryPage({ history, onClear, onRemove, settings }) {
           >
             No History Yet
           </h3>
-          <p className="text-gray-600">Your downloads will appear here</p>
+          <p className="text-gray-600">Your downloaded videos will appear here</p>
         </div>
       </div>
     );
@@ -690,6 +762,7 @@ function HistoryPage({ history, onClear, onRemove, settings }) {
         >
           Download History
         </h2>
+
         <button
           onClick={onClear}
           className="px-4 py-2 bg-red-500 text-white rounded-xl font-semibold hover:bg-red-600 transition flex items-center gap-2"
@@ -703,7 +776,7 @@ function HistoryPage({ history, onClear, onRemove, settings }) {
         {history.map((item) => (
           <div
             key={item.id}
-            className={`backdrop-blur-lg rounded-xl p-4 border flex items-center gap-4 hover:shadow-lg transition ${
+            className={`rounded-xl p-4 border flex items-center gap-4 backdrop-blur-lg hover:shadow-lg transition ${
               settings.theme === "dark"
                 ? "bg-gray-800/50 border-gray-700"
                 : "bg-white/70 border-gray-200"
@@ -714,6 +787,7 @@ function HistoryPage({ history, onClear, onRemove, settings }) {
               alt="thumbnail"
               className="w-24 h-16 rounded-lg object-cover"
             />
+
             <div className="flex-1">
               <p
                 className={`font-semibold ${
@@ -729,6 +803,7 @@ function HistoryPage({ history, onClear, onRemove, settings }) {
                 {item.quality}
               </span>
             </div>
+
             <button
               onClick={() => onRemove(item.id)}
               className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
@@ -757,12 +832,13 @@ function SettingsPage({ settings, onUpdate }) {
       </h2>
 
       <div
-        className={`backdrop-blur-lg rounded-2xl p-6 border space-y-8 ${
+        className={`rounded-2xl p-6 border backdrop-blur-lg space-y-6 ${
           settings.theme === "dark"
             ? "bg-gray-800/50 border-gray-700"
             : "bg-white/70 border-gray-200"
         }`}
       >
+        {/* Theme Toggle */}
         <div className="flex items-center justify-between">
           <div>
             <h3
@@ -772,78 +848,102 @@ function SettingsPage({ settings, onUpdate }) {
             >
               Dark Mode
             </h3>
-            <p className="text-sm text-gray-600">Switch between themes</p>
+            <p className="text-sm text-gray-500">
+              Switch between light and dark theme
+            </p>
           </div>
           <button
             onClick={() =>
-              onUpdate({ theme: settings.theme === "light" ? "dark" : "light" })
+              onUpdate({ theme: settings.theme === "dark" ? "light" : "dark" })
             }
-            className={`w-14 h-8 rounded-full transition ${
-              settings.theme === "dark" ? "bg-red-600" : "bg-gray-300"
-            } relative`}
+            className={`p-3 rounded-xl transition ${
+              settings.theme === "dark"
+                ? "bg-gray-700 text-yellow-400"
+                : "bg-gray-200 text-gray-700"
+            }`}
           >
-            <div
-              className={`absolute top-1 w-6 h-6 bg-white rounded-full transition-all flex items-center justify-center ${
-                settings.theme === "dark" ? "left-7" : "left-1"
-              }`}
-            >
-              {settings.theme === "dark" ? (
-                <Moon className="w-3 h-3 text-red-600" />
-              ) : (
-                <Sun className="w-3 h-3 text-gray-600" />
-              )}
-            </div>
+            {settings.theme === "dark" ? (
+              <Sun className="w-5 h-5" />
+            ) : (
+              <Moon className="w-5 h-5" />
+            )}
           </button>
         </div>
 
-        <div className="flex items-center justify-between pt-4 border-t border-gray-200">
+        {/* Default Quality */}
+        <div>
+          <h3
+            className={`font-semibold mb-2 ${
+              settings.theme === "dark" ? "text-white" : "text-gray-900"
+            }`}
+          >
+            Default Quality
+          </h3>
+          <select
+            value={settings.defaultQuality}
+            onChange={(e) => onUpdate({ defaultQuality: e.target.value })}
+            className={`w-full px-4 py-3 rounded-xl border focus:ring-2 focus:ring-red-500 outline-none ${
+              settings.theme === "dark"
+                ? "bg-gray-700 text-white border-gray-600"
+                : "bg-white border-gray-300"
+            }`}
+          >
+            <option value="360p">360p</option>
+            <option value="480p">480p</option>
+            <option value="720p">720p (HD)</option>
+            <option value="1080p">1080p (Full HD)</option>
+          </select>
+        </div>
+
+        {/* Auto Download */}
+        <div className="flex items-center justify-between">
           <div>
             <h3
               className={`font-semibold ${
                 settings.theme === "dark" ? "text-white" : "text-gray-900"
               }`}
             >
-              Default Quality
+              Auto Download
             </h3>
-            <p className="text-sm text-gray-600">Preferred download quality</p>
+            <p className="text-sm text-gray-500">
+              Start download automatically after fetching
+            </p>
           </div>
-          <select
-            value={settings.defaultQuality}
-            onChange={(e) => onUpdate({ defaultQuality: e.target.value })}
-            className={`px-4 py-2 rounded-xl font-semibold ${
-              settings.theme === "dark"
-                ? "bg-gray-700 text-white"
-                : "bg-gray-100 text-gray-900"
+          <button
+            onClick={() => onUpdate({ autoDownload: !settings.autoDownload })}
+            className={`relative w-14 h-8 rounded-full transition ${
+              settings.autoDownload ? "bg-green-500" : "bg-gray-300"
             }`}
           >
-            <option value="1080p">1080p</option>
-            <option value="720p">720p</option>
-            <option value="480p">480p</option>
-          </select>
+            <div
+              className={`absolute top-1 left-1 w-6 h-6 bg-white rounded-full transition transform ${
+                settings.autoDownload ? "translate-x-6" : ""
+              }`}
+            />
+          </button>
         </div>
       </div>
 
+      {/* App Info */}
       <div
-        className={`backdrop-blur-lg rounded-2xl p-6 border ${
+        className={`rounded-2xl p-6 border backdrop-blur-lg text-center ${
           settings.theme === "dark"
             ? "bg-gray-800/50 border-gray-700"
             : "bg-white/70 border-gray-200"
         }`}
       >
+        <Youtube className="w-12 h-12 text-red-500 mx-auto mb-3" />
         <h3
-          className={`font-bold mb-2 ${
+          className={`font-bold text-lg ${
             settings.theme === "dark" ? "text-white" : "text-gray-900"
           }`}
         >
-          About
+          YT Downloader Pro
         </h3>
-        <p className="text-sm text-gray-600 mb-3">
-          YT Downloader Pro — Download YouTube videos in HD quality
+        <p className="text-sm text-gray-500 mt-1">Version 1.0.0</p>
+        <p className="text-xs text-gray-400 mt-4">
+          Made with ❤️ by Claude
         </p>
-        <div className="flex items-center gap-2 text-sm text-gray-500">
-          <CheckCircle className="w-4 h-4 text-green-500" />
-          <span>100% Free • HD Quality • Fast Downloads</span>
-        </div>
       </div>
     </div>
   );
